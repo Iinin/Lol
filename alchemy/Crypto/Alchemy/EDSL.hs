@@ -36,7 +36,7 @@ import Data.Type.Natural
 pt1 :: forall a d ptexpr t m zp .
   (AddPT ptexpr, MulPT ptexpr, a ~ Cyc t m zp,
    AddPubCtxPT ptexpr d a, AdditiveCtxPT ptexpr (Add1 d) a,
-   RingCtxPT ptexpr d a, Ring a, LambdaD ptexpr)
+   RingCtxPT ptexpr d a, Ring a)
   => ptexpr (Add1 d) a -> ptexpr (Add1 d) a -> ptexpr d a
 pt1 a b = addPublicPT 2 $ a *# (a +# b)
 

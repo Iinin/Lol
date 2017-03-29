@@ -187,13 +187,6 @@ instance (SymCT ctexpr, MonadRandom mon, MonadReader v mon, MonadState ([Dynamic
     thint <- genTunnHint @gad f
     return $ p2cmap (tunnelCT thint)
 
-instance (Lambda ctexpr, Monad mon) => LambdaD (PT2CT m'map zqs zq'map gad v ctexpr mon) where
-  --lamD f = P2C $ lam $ runP2C . f . P2C
-  appD f a = P2C $ do
-    a' <- runP2C a
-    f' <- runP2C f
-    return $ app f' a'
-
 ---- Monad helper functions
 
 -- retrieve the scaled variance parameter from the Reader
