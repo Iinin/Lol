@@ -28,6 +28,7 @@ import Control.Monad.State.Strict
 import Crypto.Alchemy.Depth
 import Crypto.Alchemy.Language.AddPT
 import Crypto.Alchemy.Language.Lam
+import Crypto.Alchemy.Language.Lit
 import Crypto.Alchemy.Language.CT
 import Crypto.Alchemy.Language.ModSwPT
 import Crypto.Alchemy.Language.MulPT
@@ -68,35 +69,72 @@ newtype PT2CT :: [(Factored,Factored)] -- map from plaintext index to ciphertext
            -> *                        -- gadget for key switching
            -> *                        -- variance type
            -> (* -> *)                 -- ciphertext interpreter
+           -> (* -> *)                 -- monad
            -> Depth                    -- (multiplicative) depth of the computation
                                        --   n.b. This should usually be ('T 'Z) in top level code.
            -> *                        -- type contained in the expression
            -> * where
-  P2C :: {runP2C :: ctexpr (CTType m'map zqs d a)} -> PT2CT m'map zqs zq'map gad v ctexpr d a
+  P2C :: {runP2C :: mon (ctexpr (CTType m'map zqs d a))} -> PT2CT m'map zqs zq'map gad v ctexpr mon d a
 
-p2cmap :: (ctexpr (CTType m'map zqs d a) -> ctexpr (CTType m'map zqs d' b))
-           -> PT2CT m'map zqs zq'map gad v ctexpr d a
-           -> PT2CT m'map zqs zq'map gad v ctexpr d' b
-p2cmap f = P2C . f . runP2C
+p2cmap :: (Monad mon) => (ctexpr (CTType m'map zqs d a) -> ctexpr (CTType m'map zqs d' b))
+           -> PT2CT m'map zqs zq'map gad v ctexpr mon d a
+           -> PT2CT m'map zqs zq'map gad v ctexpr mon d' b
+p2cmap f a = P2C $ do
+  a' <- runP2C a
+  return $ f a'
 
--- explicit forall for type application
-compile :: forall m'map zqs zq'map gad v ctexpr d a rnd mon .
-  (MonadRandom rnd, mon ~ ReaderT v (StateT ([Dynamic],[Dynamic]) rnd))
-  => v -> mon (PT2CT m'map zqs zq'map gad v ctexpr d a) -> rnd (ctexpr (CTType m'map zqs d a))
-compile v a = runP2C <$> (flip evalStateT ([],[]) $ flip runReaderT v a)
+runme :: forall mon v rnd a m zp t m' zq ctexpr z .
+  (mon ~ ReaderT v (StateT ([Dynamic],[Dynamic]) rnd),
+   MonadRandom rnd, a ~ CT m zp (Cyc t m' zq),
+   GenSKCtx t m' z v, Typeable (Cyc t m' z), z ~ LiftOf zp)
+  => v -> mon (ctexpr a) -> rnd (ctexpr a, SK (Cyc t m' z))
+runme v a = flip evalStateT ([],[]) $ flip runReaderT v $ do
+  x <- a
+  sk <- getKey
+  return (x,sk)
+
+class Compile a where
+
+  type F a
+
+  compile :: a -> F a
+
+instance Compile (PT2CT m'map zqs zq'map gad v ctexpr mon d (Cyc t m zp)) where
+  type F (PT2CT m'map zqs zq'map gad v ctexpr mon d (Cyc t m zp)) =
+    mon (ctexpr (CT m zp (Cyc t (Lookup m m'map) (zqs !! d))))
+
+  compile = runP2C
+
+instance (EncryptCtx t m m' z zp zq, Compile b,
+          Lit ctexpr, LitCtx ctexpr (CT m zp (Cyc t m' zq)),
+          MonadReader v mon, MonadState ([Dynamic],[Dynamic]) mon, MonadRandom mon,
+          GenSKCtx t m' z v,
+          Typeable t, Typeable m', Typeable z, -- a bug
+          z ~ LiftOf zp, m' ~ Lookup m m'map, zq ~ (zqs !! d))
+  => Compile (PT2CT m'map zqs zq'map gad v ctexpr mon d (Cyc t m zp) -> b) where
+  type F (PT2CT m'map zqs zq'map gad v ctexpr mon d (Cyc t m zp) -> b) =
+    Cyc t m zp -> F b
+
+  compile f x = compile $ f $ P2C $ do
+    k :: SK (Cyc t m' z) <- getKey
+    y :: CT m zp (Cyc t m' zq) <- encrypt k x
+    return $ lit y
 
 ---- Language instances
 
-instance (SymCT ctexpr) => AddPT (PT2CT m'map zqs zq'map gad v ctexpr) where
+instance (SymCT ctexpr, Monad mon) => AddPT (PT2CT m'map zqs zq'map gad v ctexpr mon) where
 
-  type AddPubCtxPT   (PT2CT m'map zqs zq'map gad v ctexpr) d (Cyc t m zp) =
+  type AddPubCtxPT   (PT2CT m'map zqs zq'map gad v ctexpr mon) d (Cyc t m zp) =
     (AddPubCtxCT ctexpr (CT m zp (Cyc t (Lookup m m'map) (zqs !! d))))
-  type MulPubCtxPT   (PT2CT m'map zqs zq'map gad v ctexpr) d (Cyc t m zp) =
+  type MulPubCtxPT   (PT2CT m'map zqs zq'map gad v ctexpr mon) d (Cyc t m zp) =
     (MulPubCtxCT ctexpr (CT m zp (Cyc t (Lookup m m'map) (zqs !! d))))
-  type AdditiveCtxPT (PT2CT m'map zqs zq'map gad v ctexpr) d (Cyc t m zp) =
+  type AdditiveCtxPT (PT2CT m'map zqs zq'map gad v ctexpr mon) d (Cyc t m zp) =
     (AdditiveCtxCT ctexpr (CT m zp (Cyc t (Lookup m m'map) (zqs !! d))))
 
-  (P2C a) +# (P2C b) = P2C $ a +^ b
+  (P2C a) +# (P2C b) = P2C $ do
+    a' <- a
+    b' <- b
+    return $ a' +^ b'
   negPT = p2cmap negCT
   addPublicPT = p2cmap . addPublicCT
   mulPublicPT = p2cmap . mulPublicCT
@@ -110,23 +148,25 @@ type RingCtxPT' ctexpr t m m' z zp zq zq' zq'map gad v =
    Typeable (Cyc t m' z),
    Typeable (KSQuadCircHint gad (Cyc t m' (Lookup zq' zq'map))))
 
-instance (SymCT ctexpr, MonadRandom mon, MonadReader v mon, MonadState ([Dynamic],[Dynamic]) mon)
-  => MulPT mon (PT2CT m'map zqs zq'map gad v ctexpr) where
-  type RingCtxPT (PT2CT m'map zqs zq'map gad v ctexpr) d (Cyc t m zp) =
+instance (SymCT ctexpr, Lambda ctexpr, MonadRandom mon, MonadReader v mon, MonadState ([Dynamic],[Dynamic]) mon)
+  => MulPT (PT2CT m'map zqs zq'map gad v ctexpr mon) where
+  type RingCtxPT (PT2CT m'map zqs zq'map gad v ctexpr mon) d (Cyc t m zp) =
     (RingCtxPT' ctexpr t m (Lookup m m'map) (LiftOf zp) zp (zqs !! d) (zqs !! (Add1 d)) zq'map gad v)
 
   -- EAC: should key switch before the mul, only if necessary. Current signature of *# doesn't allow this...
   (*#) :: forall rp t m zp zqid zq expr d .
        (rp ~ Cyc t m zp, zqid ~ Add1 d, zq ~ (zqs !! zqid),
-        expr ~ PT2CT m'map zqs zq'map gad v ctexpr, RingCtxPT expr d (Cyc t m zp))
-       => mon (expr zqid rp -> expr zqid rp -> expr d rp)
-  (*#) = do
+        expr ~ PT2CT m'map zqs zq'map gad v ctexpr mon, RingCtxPT expr d (Cyc t m zp))
+       => expr zqid rp -> expr zqid rp -> expr d rp
+  (P2C a) *# (P2C b) = P2C $ do
+    a' <- a
+    b' <- b
     hint :: KSQuadCircHint gad (Cyc t (Lookup m m'map) (Lookup zq zq'map)) <-
       getKSHint (Proxy::Proxy zq'map) (Proxy::Proxy (LiftOf zp)) (Proxy::Proxy zq)
-    return $ \(P2C a) (P2C b) -> P2C $ rescaleCT $ keySwitchQuadCT hint $ a *^ b
+    return $ rescaleCT $ keySwitchQuadCT hint $ a' *^ b'
 
-instance (SymCT ctexpr) => ModSwPT (PT2CT m'map zqs zq'map gad v ctexpr) where
-  type ModSwitchCtxPT (PT2CT m'map zqs zq'map gad v ctexpr) d (Cyc t m zp) zp' =
+instance (SymCT ctexpr, Monad mon) => ModSwPT (PT2CT m'map zqs zq'map gad v ctexpr mon) where
+  type ModSwitchCtxPT (PT2CT m'map zqs zq'map gad v ctexpr mon) d (Cyc t m zp) zp' =
     (ModSwitchCtxCT ctexpr (CT m zp (Cyc t (Lookup m m'map) (zqs !! d))) zp')
 
   modSwitchDec = p2cmap modSwitchPT
@@ -138,8 +178,8 @@ type TunnelCtxPT' ctexpr t e r s r' s' z zp zq gad v =
    GenSKCtx t s' z v, Typeable (Cyc t s' z))
 
 instance (SymCT ctexpr, MonadRandom mon, MonadReader v mon, MonadState ([Dynamic],[Dynamic]) mon)
-  => TunnelPT mon (PT2CT m'map zqs zq'map gad v ctexpr d) where
-  type TunnelCtxPT (PT2CT m'map zqs zq'map gad v ctexpr d) t e r s zp =
+  => TunnelPT mon (PT2CT m'map zqs zq'map gad v ctexpr mon d) where
+  type TunnelCtxPT (PT2CT m'map zqs zq'map gad v ctexpr mon d) t e r s zp =
     (TunnelCtxPT' ctexpr t e r s (Lookup r m'map) (Lookup s m'map) (LiftOf zp) zp (zqs !! d) gad v)
 
   -- EAC: TODO Need to modSwitch up before a *sequence* of tunnels, and down after. How do we detect this?
@@ -147,9 +187,12 @@ instance (SymCT ctexpr, MonadRandom mon, MonadReader v mon, MonadState ([Dynamic
     thint <- genTunnHint @gad f
     return $ p2cmap (tunnelCT thint)
 
-instance (Lambda ctexpr) => LambdaD (PT2CT m'map zqs zq'map gad v ctexpr) where
-  lamD f = P2C $ lam $ runP2C . f . P2C
-  appD = p2cmap . app . runP2C
+instance (Lambda ctexpr, Monad mon) => LambdaD (PT2CT m'map zqs zq'map gad v ctexpr mon) where
+  --lamD f = P2C $ lam $ runP2C . f . P2C
+  appD f a = P2C $ do
+    a' <- runP2C a
+    f' <- runP2C f
+    return $ app f' a'
 
 ---- Monad helper functions
 

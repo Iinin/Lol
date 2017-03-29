@@ -34,11 +34,11 @@ instance AddPT ID where
   addPublicPT a = fmap (a+)
   mulPublicPT a = fmap (a*)
 
-instance (Applicative mon) => MulPT mon ID where
+instance MulPT ID where
 
   type RingCtxPT ID d a = (Ring a)
 
-  (*#) = pure $ \a b -> ID $ unID a * unID b
+  a *# b = ID $ unID a * unID b
 
 instance ModSwPT ID where
 

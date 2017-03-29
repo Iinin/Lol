@@ -25,11 +25,11 @@ instance AddPT (ShowPT) where
   addPublicPT a (SPT _ b) = SPT 0 $ "( " ++ (show a) ++ " )" ++ " + " ++ "( " ++ b ++ " )"
   mulPublicPT a (SPT _ b) = SPT 0 $ "( " ++ (show a) ++ " )" ++ " * " ++ "( " ++ b ++ " )"
 
-instance (Applicative mon) => MulPT mon ShowPT where
+instance MulPT ShowPT where
 
   type RingCtxPT ShowPT d a = ()
 
-  (*#) = pure $ \(SPT _ a) (SPT _ b) -> SPT 0 $ "( " ++ a ++ " )" ++ " * " ++ "( " ++ b ++ " )"
+  (SPT _ a) *# (SPT _ b) = SPT 0 $ "( " ++ a ++ " )" ++ " * " ++ "( " ++ b ++ " )"
 
 instance ModSwPT ShowPT where
 
