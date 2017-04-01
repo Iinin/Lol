@@ -2,7 +2,7 @@
 {-# LANGUAGE DataKinds             #-}
 {-# LANGUAGE FlexibleContexts      #-}
 {-# LANGUAGE FlexibleInstances     #-}
-{-# LANGUAGE GADTSyntax            #-}
+{-# LANGUAGE GADTs                 #-}
 {-# LANGUAGE InstanceSigs          #-}
 {-# LANGUAGE LambdaCase            #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -75,6 +75,14 @@ newtype PT2CT :: [(Factored,Factored)] -- map from plaintext index to ciphertext
            -> *                        -- type contained in the expression
            -> * where
   P2C :: {runP2C :: mon (ctexpr (CTType m'map zqs d a))} -> PT2CT m'map zqs zq'map gad v ctexpr mon d a
+
+newtype Wrap expr mon a = Wrap {unwrap :: mon (expr a)}
+
+-- EAC: somehow the type family gets us something over using a GADT. With the GADT,
+-- we don't know which constructor to use...
+instance (Lambda (Wrap ctexpr mon)) => LambdaD (PT2CT m'map zqs zq'map gad v ctexpr mon) where
+  lamD f = P2C $ unwrap $ lam $ Wrap . runP2C . f . P2C . unwrap
+  appD (P2C f) (P2C a) = P2C $ unwrap $ app (Wrap f) (Wrap a)
 
 p2cmap :: (Monad mon) => (ctexpr (CTType m'map zqs d a) -> ctexpr (CTType m'map zqs d' b))
            -> PT2CT m'map zqs zq'map gad v ctexpr mon d a
