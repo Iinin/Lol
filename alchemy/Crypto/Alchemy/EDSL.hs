@@ -15,6 +15,8 @@
 module Crypto.Alchemy.EDSL where
 
 import Control.Monad.Identity
+import Control.Monad.Reader
+import Control.Monad.State.Strict
 
 import Crypto.Alchemy.Depth
 import Crypto.Alchemy.Interpreter.Duplicate
@@ -41,6 +43,8 @@ import Crypto.Lol.Cyclotomic.Tensor (TElt) -- EAC: I shouldn't need to explicitl
 import Crypto.Lol.Types.ZPP -- EAC: I shouldn't need to explicitly import this...
 
 import Data.Type.Natural
+
+import Data.Dynamic
 
 pt1 :: forall t m zp d ptexpr a .
   (a ~ Cyc t m zp, AddPT ptexpr, MulPT ptexpr, a ~ Cyc t m zp,
@@ -94,12 +98,13 @@ main = do
          @TrivGad
          @Double
          1.0
-         (pt1 @CT @F4 @(Zq 7) @('T 'Z))
-  putStrLn $ unSCT x
+         (pt2 @CT @F4 @(Zq 7) @('T 'Z))
+  showx <- flip evalStateT ([]::[Dynamic],[]::[Dynamic]) $ flip runReaderT (0::Double) $ unSCT x
+  putStrLn $ showx
 {-
   -- example with rescale de-duplication when tunneling
   -- print the unapplied PT function
-  putStrLn $ unSPT $ runIdentity $ tunn1 @CT @H0 @H1 @H2 @(Zq PP8) @('T 'Z) Proxy
+  putStrLn $ unSPT $ tunn1 @CT @H0 @H1 @H2 @(Zq PP8) @('T 'Z) Proxy
   -- compile the up-applied function to CT, then print it out
   (y,_) <- compile
          @'[ '(H0, H0'), '(H1,H1'), '(H2, H2') ]
@@ -111,8 +116,10 @@ main = do
          (tunn1 @CT @H0 @H1 @H2 @(Zq PP8) @('T 'Z) Proxy)
   -- compile once, interpret with multiple ctexprs!!
   let (z1,z2) = duplicate $ runDeepSeq y
-  putStrLn $ unSCT z1
-  putStrLn $ unSCT $ runDupRescale z2
+  showz1 <- flip evalStateT ([]::[Dynamic],[]::[Dynamic]) $ flip runReaderT (0::Double) $ unSCT z1
+  putStrLn showz1
+  showz2 <- flip evalStateT ([]::[Dynamic],[]::[Dynamic]) $ flip runReaderT (0::Double) $ unSCT $ runDupRescale z2
+  putStrLn showz2
 -}
 type H0 = F8
 type H1 = F4 * F7

@@ -28,7 +28,6 @@ import Control.Monad.State.Strict
 import Crypto.Alchemy.Depth
 import Crypto.Alchemy.Language.AddPT
 import Crypto.Alchemy.Language.Lam
-import Crypto.Alchemy.Language.Lit
 import Crypto.Alchemy.Language.CT
 import Crypto.Alchemy.Language.ModSwPT
 import Crypto.Alchemy.Language.MulPT
@@ -90,7 +89,24 @@ p2cmap :: (Monad mon) => (ctexpr (CTType m'map zqs d a) -> ctexpr (CTType m'map 
 p2cmap f a = P2C $ do
   a' <- runP2C a
   return $ f a'
+{-
+-- hidden constructor
+newtype CustomMonad v (rnd :: * -> *) a = CMon {unCMon :: ReaderT v (StateT ([Dynamic],[Dynamic]) rnd) a}
+  deriving (Functor, Applicative, Monad, MonadReader v, MonadState ([Dynamic],[Dynamic]), MonadRandom)
+-}
+-- hidden constructor
+newtype PT2CTState = St ([Dynamic],[Dynamic])
 
+compile :: forall m'map zqs zq'map gad v ctexpr d a rnd .
+  (MonadRandom rnd)
+  => v
+     -> PT2CT m'map zqs zq'map gad v ctexpr (ReaderT v (StateT ([Dynamic],[Dynamic]) rnd)) d a
+     -> rnd (ctexpr (CTType m'map zqs d a), PT2CTState)
+compile v (P2C a) = do
+  (b,s) <- flip runStateT ([],[]) $ flip runReaderT v a
+  return (b, St s)
+
+{-
 runme :: forall mon v rnd a m zp t m' zq ctexpr z .
   (mon ~ ReaderT v (StateT ([Dynamic],[Dynamic]) rnd),
    MonadRandom rnd, a ~ CT m zp (Cyc t m' zq),
@@ -127,7 +143,7 @@ instance (EncryptCtx t m m' z zp zq, Compile b,
     k :: SK (Cyc t m' z) <- getKey
     y :: CT m zp (Cyc t m' zq) <- encrypt k x
     return $ lit y
-
+-}
 ---- Language instances
 
 instance (SymCT ctexpr, Monad mon) => AddPT (PT2CT m'map zqs zq'map gad v ctexpr mon) where
@@ -156,7 +172,7 @@ type RingCtxPT' ctexpr t m m' z zp zq zq' zq'map gad v =
    Typeable (Cyc t m' z),
    Typeable (KSQuadCircHint gad (Cyc t m' (Lookup zq' zq'map))))
 
-instance (SymCT ctexpr, Lambda ctexpr, MonadRandom mon, MonadReader v mon, MonadState ([Dynamic],[Dynamic]) mon)
+instance (SymCT ctexpr, MonadRandom mon, MonadReader v mon, MonadState ([Dynamic],[Dynamic]) mon)
   => MulPT (PT2CT m'map zqs zq'map gad v ctexpr mon) where
   type RingCtxPT (PT2CT m'map zqs zq'map gad v ctexpr mon) d (Cyc t m zp) =
     (RingCtxPT' ctexpr t m (Lookup m m'map) (LiftOf zp) zp (zqs !! d) (zqs !! (Add1 d)) zq'map gad v)
