@@ -179,21 +179,24 @@ instance (SymCT ctexpr, Monad mon) => ModSwPT (PT2CT m'map zqs zq'map gad v ctex
 
   modSwitchDec = p2cmap modSwitchPT
 
-type TunnelCtxPT' ctexpr t e r s r' s' z zp zq gad v =
-  (TunnelCtxCT ctexpr t e r s (e * (r' / r)) r' s'   zp zq gad,
-   GenTunnelInfoCtx   t e r s (e * (r' / r)) r' s' z zp zq gad,
-   GenSKCtx t r' z v, Typeable (Cyc t r' z),
-   GenSKCtx t s' z v, Typeable (Cyc t s' z))
+type TunnelCtxPT' ctexpr t e r s r' s' z zp zq zq' gad v =
+  (TunnelCtxCT ctexpr t e r s (e * (r' / r)) r' s'   zp zq' gad,
+   GenTunnelInfoCtx   t e r s (e * (r' / r)) r' s' z zp zq' gad,
+   GenSKCtx t r' z v, GenSKCtx t s' z v,
+   Typeable t, Typeable r', Typeable s', Typeable z, -- bug; see genTunnHint
+   RescaleCtxCT ctexpr (CT r zp (Cyc t r' zq')) zq, RescaleCtxCT ctexpr (CT s zp (Cyc t s' zq)) zq')
 
 instance (SymCT ctexpr, MonadRandom mon, MonadReader v mon, MonadState ([Dynamic],[Dynamic]) mon)
-  => TunnelPT mon (PT2CT m'map zqs zq'map gad v ctexpr mon d) where
-  type TunnelCtxPT (PT2CT m'map zqs zq'map gad v ctexpr mon d) t e r s zp =
-    (TunnelCtxPT' ctexpr t e r s (Lookup r m'map) (Lookup s m'map) (LiftOf zp) zp (zqs !! d) gad v)
+  => TunnelPT (PT2CT m'map zqs zq'map gad v ctexpr mon) where
+  type TunnelCtxPT (PT2CT m'map zqs zq'map gad v ctexpr mon) d t e r s zp =
+    (TunnelCtxPT' ctexpr t e r s (Lookup r m'map) (Lookup s m'map) (LiftOf zp) zp (zqs !! d) (zqs !! (Add1 d)) gad v)
 
-  -- EAC: TODO Need to modSwitch up before a *sequence* of tunnels, and down after. How do we detect this?
-  tunnelPT f = do
-    thint <- genTunnHint @gad f
-    return $ p2cmap (tunnelCT thint)
+  tunnelPT :: forall d t e r s zp . (TunnelCtxPT (PT2CT m'map zqs zq'map gad v ctexpr mon) d t e r s zp)
+           => Linear t zp e r s -> PT2CT m'map zqs zq'map gad v ctexpr mon d (Cyc t r zp) -> PT2CT m'map zqs zq'map gad v ctexpr mon d (Cyc t s zp)
+  tunnelPT f (P2C a) = P2C $ do
+    thint <- genTunnHint @gad @(zqs !! (Add1 d)) f
+    a' <- a
+    return $ rescaleCT $ tunnelCT thint $ rescaleCT a'
 
 ---- Monad helper functions
 
@@ -212,7 +215,7 @@ getKey = keyLookup >>= \case
 
 -- not memoized right now, but could be if we also store the linear function as part of the lookup key
 -- EAC: https://ghc.haskell.org/trac/ghc/ticket/13490
-genTunnHint :: forall gad mon t e r s e' r' s' z zp zq v .
+genTunnHint :: forall gad zq mon t e r s e' r' s' z zp v .
   (MonadReader v mon, MonadState ([Dynamic], [Dynamic]) mon, MonadRandom mon,
    GenSKCtx t r' z v, Typeable (Cyc t r' (LiftOf zp)),
    GenSKCtx t s' z v, Typeable (Cyc t s' (LiftOf zp)),
